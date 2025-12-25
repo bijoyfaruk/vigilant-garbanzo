@@ -1,0 +1,117 @@
+name: Fixed IP RDP
+
+/**
+  * Author: Wali Ullah Shuvo
+  * Email: shuvo@ilmifytech.com
+  * Linkedin: https://www.linkedin.com/in/waliullahshuvo/
+  */
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # ---------------------------------------------------
+      # 1. Check if we have a saved login from before
+      # ---------------------------------------------------
+      - name: Restore Tailscale Identity
+        id: restore-cache
+        uses: actions/cache/restore@v3
+        with:
+          path: 'C:\ProgramData\Tailscale'
+          key: tailscale-starlord-final-v10 
+          # Naming it v10 to ensure fresh start
+
+      # ---------------------------------------------------
+      # 2. Install Tailscale
+      # ---------------------------------------------------
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", ""$env:TEMP\tailscale.msi"", "/quiet", "/norestart" -Wait
+
+      # ---------------------------------------------------
+      # 3. IF CACHE EXISTS: Inject it properly
+      # ---------------------------------------------------
+      - name: Inject Saved Login (If Exists)
+        if: steps.restore-cache.outputs.cache-hit == 'true'
+        run: |
+          Write-Host "Saved login found! Restoring..."
+          # Restart service to apply the restored files
+          Restart-Service -Name "Tailscale" -Force
+          Start-Sleep -Seconds 10
+
+      # ---------------------------------------------------
+      # 4. Connect (Auth Link only appears on First Run)
+      # ---------------------------------------------------
+      - name: Connect to Tailscale
+        run: |
+          # If restored, this will auto-connect. If not, it will show link.
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname="StarLord-PC" --accept-routes
+          
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      # ---------------------------------------------------
+      # 5. CRITICAL: Save Cache IMMEDIATELY after First Login
+      # ---------------------------------------------------
+      - name: STOP & SAVE CACHE (First Run Only)
+        if: steps.restore-cache.outputs.cache-hit != 'true'
+        run: |
+          Write-Host "First login detected. Saving state for future..."
+          # We must stop the service to release file locks for saving
+          Stop-Service -Name "Tailscale" -Force
+          Start-Sleep -Seconds 5
+
+      - name: Save to GitHub Storage
+        if: steps.restore-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v3
+        with:
+          path: 'C:\ProgramData\Tailscale'
+          key: tailscale-starlord-final-v10
+
+      - name: Restart Service After Save
+        if: steps.restore-cache.outputs.cache-hit != 'true'
+        run: |
+          Start-Service -Name "Tailscale"
+          Start-Sleep -Seconds 5
+          # Re-verify connection
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --hostname="StarLord-PC" --accept-routes
+
+      # ---------------------------------------------------
+      # 6. RDP Setup
+      # ---------------------------------------------------
+      - name: Configure RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+          
+          $password = "waliullah.shuvo#1"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "StarLord" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "StarLord"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "StarLord"
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=============================="
+          Write-Host "COMPUTER:      StarLord-PC"
+          Write-Host "STATIC IP:     $env:TAILSCALE_IP"
+          Write-Host "USERNAME:      StarLord"
+          Write-Host "PASSWORD:      $env:RDP_PASSWORD"
+          Write-Host "STATUS:        Saved & Secured."
+          Write-Host "==============================`n"
+          
+          while ($true) {
+              Start-Sleep -Seconds 300
+          }
