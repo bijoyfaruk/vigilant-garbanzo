@@ -1,11 +1,5 @@
 name: Fixed IP RDP
 
-/**
-  * Author: Wali Ullah Shuvo
-  * Email: shuvo@ilmifytech.com
-  * Linkedin: https://www.linkedin.com/in/waliullahshuvo/
-  */
-
 on:
   workflow_dispatch:
 
