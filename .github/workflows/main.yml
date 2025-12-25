@@ -1,4 +1,4 @@
-name: SHUVO
+name: RDP
 
 on:
   workflow_dispatch:
